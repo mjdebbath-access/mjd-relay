@@ -10,7 +10,7 @@ const boxes = new Map();
 // LICENSE_SECRET vide = accès libre. REVOKED_KEYS = identifiants de clés révoquées, séparés par des virgules.
 const SECRET = process.env.LICENSE_SECRET || '';
 const REVOKED = new Set((process.env.REVOKED_KEYS || '').split(',').map(s => s.trim()).filter(Boolean));
-function checkKey(k) {
+function checkKey(k, dev) {
   if (!SECRET) return { ok: true, open: true };
   const m = /^MJDK1\.([A-Za-z0-9_-]{8,400})\.([A-Za-z0-9_-]{22})$/.exec(k || '');
   if (!m) return { ok: false, why: 'cle' };
@@ -20,8 +20,9 @@ function checkKey(k) {
   let p;
   try { p = JSON.parse(Buffer.from(m[1], 'base64url').toString()); } catch (e) { return { ok: false, why: 'cle' }; }
   if (REVOKED.has(p.i)) return { ok: false, why: 'revoquee' };
+  if (p.v && p.v !== String(dev || '').toUpperCase().replace(/[^A-Z0-9]/g, '')) return { ok: false, why: 'appareil' };
   if (!p.e || Date.now() > p.e) return { ok: false, why: 'expiree', plan: p.p, exp: p.e };
-  return { ok: true, plan: p.p, exp: p.e, label: p.l };
+  return { ok: true, plan: p.p, exp: p.e, label: p.l, bound: !!p.v };
 }
 
 // TURN Cloudflare : l'identifiant et le jeton restent dans les variables d'environnement de Render
@@ -46,7 +47,7 @@ let seq = Date.now();
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Key',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Key, X-Dev',
   'Access-Control-Max-Age': '86400'
 };
 const box = id => {
@@ -103,7 +104,7 @@ http.createServer((req, res) => {
   if (limited(ip)) return reply(res, 429, { error: 'trop de requetes' });
   const u = new URL(req.url, 'http://x');
   const [, action, id] = u.pathname.split('/');
-  const lic = checkKey(req.headers['x-key']);
+  const lic = checkKey(req.headers['x-key'], req.headers['x-dev']);
   if (action === 'license') return reply(res, lic.ok ? 200 : 401, lic);
   if (!lic.ok) return reply(res, 401, { error: 'licence', why: lic.why });
   if (!id || !/^[A-Za-z0-9_-]{16,64}$/.test(id)) return reply(res, 400, { error: 'boite invalide' });
